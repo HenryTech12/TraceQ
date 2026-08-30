@@ -1,166 +1,164 @@
-"use client";
+import Link from "next/link";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { analyzeFile, ApiError, createSession, getFile, getGraph, seedSession } from "@/lib/api";
-import { clearStoredSessionId, loadStoredSessionId, storeSessionId } from "@/lib/session";
-import { AnalysisResult, SessionGraph } from "@/lib/types";
-import UploadZone from "@/components/UploadZone";
-import DnaGraph from "@/components/DnaGraph";
-import EvidencePanel from "@/components/EvidencePanel";
+const VERDICTS = [
+  {
+    tag: "VERIFIED_ORIGIN",
+    color: "text-verified",
+    ring: "ring-verified/30",
+    desc: "A C2PA manifest, camera EXIF, or other cryptographic/metadata evidence was found and checks out.",
+  },
+  {
+    tag: "DERIVED",
+    color: "text-derived",
+    ring: "ring-derived/30",
+    desc: "This file matches an earlier upload in the session — a crop, resize, or re-encode of a known parent.",
+  },
+  {
+    tag: "NO_RECORD",
+    color: "text-norecord",
+    ring: "ring-norecord/30",
+    desc: "No verifiable chain of custody exists. TraceQ says so plainly instead of guessing.",
+  },
+];
 
-export default function Home() {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [graph, setGraph] = useState<SessionGraph>({ nodes: [], edges: [] });
-  const [selected, setSelected] = useState<AnalysisResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const initRef = useRef(false);
+const FEATURES = [
+  {
+    title: "Content DNA Graph",
+    desc: "Every upload becomes a node. Crops, resizes, and re-encodes draw live derivation edges back to their parent — a visual chain of custody for a session.",
+  },
+  {
+    title: "Trace Score",
+    desc: "A transparent, breakdown-visible score built only from deterministic evidence — never from pixel statistics or a black-box classifier.",
+  },
+  {
+    title: "Full Evidence Panel",
+    desc: "C2PA claims, EXIF/TIFF IFDs, ICC profiles, JPEG quantization tables, and perceptual hashes — the raw forensic record behind every verdict.",
+  },
+];
 
-  const refreshGraph = useCallback(async (sid: string) => {
-    try {
-      const g = await getGraph(sid);
-      setGraph(g);
-    } catch {
-      // demo backend may not be running yet — surfaced by upload errors instead
-    }
-  }, []);
+const PIPELINE = [
+  "Container walk (raw JPEG markers / PNG chunks — never trusts a library that silently drops evidence)",
+  "Provenance extraction (C2PA JUMBF/CBOR, EXIF, ICC)",
+  "Encoder fingerprinting (quant tables, progressive flag, chroma subsampling)",
+  "Perceptual + cryptographic hashing (SHA-256, pHash/dHash/aHash/wHash, ORB features)",
+  "Session-scoped derivation matching",
+  "Rule-based pipeline inference — diagnostics only, never the verdict",
+];
 
-  useEffect(() => {
-    if (initRef.current) return; // React 18 dev StrictMode double-invokes effects
-    initRef.current = true;
-    (async () => {
-      const existing = loadStoredSessionId();
-      if (existing) {
-        setSessionId(existing);
-        refreshGraph(existing);
-        return;
-      }
-      try {
-        const sid = await createSession();
-        storeSessionId(sid);
-        setSessionId(sid);
-      } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Could not reach the TraceQ API — is the backend running?");
-      }
-    })();
-  }, [refreshGraph]);
-
-  const handleFiles = useCallback(
-    async (files: File[]) => {
-      if (!sessionId) return;
-      setBusy(true);
-      setError(null);
-      try {
-        for (const file of files) {
-          const result = await analyzeFile(sessionId, file);
-          setSelected(result);
-        }
-        await refreshGraph(sessionId);
-      } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Analysis failed unexpectedly.");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [sessionId, refreshGraph],
-  );
-
-  const handleSelectNode = useCallback(
-    async (fileId: string) => {
-      if (!sessionId) return;
-      try {
-        const result = await getFile(sessionId, fileId);
-        setSelected(result);
-      } catch {
-        // ignore
-      }
-    },
-    [sessionId],
-  );
-
-  const handleNewSession = useCallback(async () => {
-    clearStoredSessionId();
-    setSelected(null);
-    setGraph({ nodes: [], edges: [] });
-    try {
-      const sid = await createSession();
-      storeSessionId(sid);
-      setSessionId(sid);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not reach the TraceQ API.");
-    }
-  }, []);
-
-  const handleLoadDemo = useCallback(async () => {
-    if (!sessionId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const g = await seedSession(sessionId);
-      setGraph(g);
-      if (g.nodes.length > 0) {
-        const result = await getFile(sessionId, g.nodes[0].id);
-        setSelected(result);
-      }
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not load the demo fixtures.");
-    } finally {
-      setBusy(false);
-    }
-  }, [sessionId]);
-
+export default function Landing() {
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <header className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Trace<span className="text-accent">Q</span>
-          </h1>
-          <p className="mt-1 max-w-xl text-sm text-muted">
-            The forensic layer for the internet. Upload a file — TraceQ reports only what it can verify
-            deterministically, and says so plainly when it can&apos;t.
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <button
-            onClick={handleLoadDemo}
-            disabled={busy || !sessionId}
-            className="rounded-lg border border-accent/40 px-3 py-1.5 text-xs text-accent hover:border-accent disabled:opacity-40"
+    <main className="mx-auto max-w-5xl px-6 py-16">
+      <nav className="mb-16 flex items-center justify-between">
+        <span className="text-lg font-bold tracking-tight">
+          Trace<span className="text-accent">Q</span>
+        </span>
+        <Link
+          href="/app"
+          className="rounded-lg border border-accent/40 px-4 py-2 text-sm font-medium text-accent hover:border-accent hover:bg-accent/5"
+        >
+          Launch app →
+        </Link>
+      </nav>
+
+      <section className="max-w-3xl">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-accent">
+          The forensic layer for the internet
+        </p>
+        <h1 className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
+          Don&apos;t guess whether it&apos;s real.
+          <br />
+          <span className="text-muted">Verify what you can prove.</span>
+        </h1>
+        <p className="mt-6 text-lg leading-relaxed text-muted">
+          Upload any image or PDF. TraceQ reconstructs where it&apos;s been — what created it, what
+          pipelines it passed through, what was done to it — using only deterministic evidence:
+          C2PA manifests, camera EXIF, encoder fingerprints, transmission signatures.
+        </p>
+        <div className="mt-8 flex flex-wrap items-center gap-4">
+          <Link
+            href="/app"
+            className="rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-[#0b0e14] hover:opacity-90"
           >
-            Load demo files
-          </button>
-          <button
-            onClick={handleNewSession}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:border-[#3a4256] hover:text-[#c7cddb]"
+            Try it now — load demo files
+          </Link>
+          <a
+            href="https://github.com/HenryTech12/TraceQ"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-lg border border-border px-5 py-3 text-sm text-muted hover:border-[#3a4256] hover:text-[#c7cddb]"
           >
-            New session
-          </button>
+            View source
+          </a>
         </div>
-      </header>
-
-      <UploadZone onFiles={handleFiles} busy={busy} />
-
-      {error && (
-        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
-      <section className="mt-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Content DNA Graph</h2>
-        <DnaGraph graph={graph} selectedId={selected?.file_id ?? null} onSelect={handleSelectNode} />
       </section>
 
-      {selected && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Evidence</h2>
-          <EvidencePanel result={selected} />
-        </section>
-      )}
+      <section className="mt-20 rounded-xl border border-border bg-panel p-6">
+        <p className="text-sm font-semibold uppercase tracking-wide text-muted">The one rule</p>
+        <p className="mt-2 text-xl leading-relaxed">
+          Every other tool in this category will show you a confidence percentage for
+          &quot;is this AI-generated?&quot;. <span className="text-accent">TraceQ refuses to</span> — and
+          that refusal is the feature. It reports a three-state verdict, backed only by evidence it can
+          verify.
+        </p>
+      </section>
+
+      <section className="mt-16">
+        <h2 className="mb-6 text-sm font-semibold uppercase tracking-wide text-muted">
+          Three verdicts. No guessing in between.
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {VERDICTS.map((v) => (
+            <div key={v.tag} className={`rounded-xl border border-border bg-panel p-5 ring-1 ${v.ring}`}>
+              <span className={`font-mono text-sm font-semibold ${v.color}`}>{v.tag}</span>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{v.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-16">
+        <h2 className="mb-6 text-sm font-semibold uppercase tracking-wide text-muted">What you get</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {FEATURES.map((f) => (
+            <div key={f.title} className="rounded-xl border border-border bg-panel p-5">
+              <h3 className="font-semibold text-[#e6e9f0]">{f.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-16">
+        <h2 className="mb-6 text-sm font-semibold uppercase tracking-wide text-muted">
+          How a file is analyzed
+        </h2>
+        <ol className="space-y-3">
+          {PIPELINE.map((step, i) => (
+            <li key={step} className="flex gap-4 rounded-lg border border-border bg-panel px-4 py-3">
+              <span className="shrink-0 font-mono text-sm text-accent">{String(i + 1).padStart(2, "0")}</span>
+              <span className="text-sm leading-relaxed text-muted">{step}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="mt-16 rounded-xl border border-border bg-panel p-8 text-center">
+        <h2 className="text-2xl font-bold tracking-tight">Ready to see a file&apos;s real history?</h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm text-muted">
+          No account, no upload history kept beyond your session. Click load demo files for an instant
+          populated Content DNA Graph, or drag in your own image.
+        </p>
+        <Link
+          href="/app"
+          className="mt-6 inline-block rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-[#0b0e14] hover:opacity-90"
+        >
+          Launch TraceQ →
+        </Link>
+      </section>
 
       <footer className="mt-16 border-t border-border pt-6 text-xs text-muted">
-        Every other tool in this category will show you a confidence percentage. Ours refuses to — and that refusal
-        is the feature.
+        TraceQ does not answer &quot;is this AI-generated?&quot; as a guess. It reports only what it can
+        verify — and stops there.
       </footer>
     </main>
   );
